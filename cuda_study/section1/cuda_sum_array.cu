@@ -3,51 +3,90 @@
 
 #include <stdio.h>
 #include <stdlib.h>
-#include <cstring>
 #include <time.h>
+#include <cstring>
 
+// Kernel function to add the elements of two arrays
+__global__ void sum_arrays_gpu(int* a, int* b, int* c, int size)
+{
+    int index = blockDim.x * blockIdx.x + threadIdx.x;
+    if (index < size)
+    {
+        c[index] = a[index] + b[index];
+    }
+}
 
-__global__ void mem_trs_test(int * input)
+// CPU function to add the elements of two arrays
+void sum_arrays_cpu(int* a, int* b, int* c, int size)
 {
-    int gid = blockIdx.x*blockDim.x + threadIdx.x;
-    printf("tid: %d, gid: %d, value: %d \n", threadIdx.x, gid, input[gid]);
+    for (int i = 0; i < size; i++)
+    {
+        c[i] = a[i] + b[i];
+    }
 }
-__global__ void mem_trs_test2(int * input, int size)
-{
-    int gid = blockIdx.x*blockDim.x + threadIdx.x;
-    if(gid<size)
-        printf("tid: %d, gid: %d, value: %d \n", threadIdx.x, gid, input[gid]);
-}
+
+// Declaration of compare_arrays function (should be defined in common.h or another source file)
+void compare_arrays(int* arr1, int* arr2, int size);
 
 int main()
 {
-    int size = 64;
-    int byte_size = size * sizeof(int);
+    int size = 1000;
+    int block_size = 128;
+    int NO_BYTE = size * sizeof(int);
 
-    int * h_input;
-    h_input = (int*)malloc(byte_size);
+    int* h_a = (int*)malloc(NO_BYTE);
+    int* h_b = (int*)malloc(NO_BYTE);
+    int* h_c = (int*)malloc(NO_BYTE);
+    int* gpu_results = (int*)malloc(NO_BYTE);
 
+    // Initialize random seed
     time_t t;
     srand((unsigned)time(&t));
-    for (int i  = 0; i < size; i++)
+
+    for (int i = 0; i < size; i++)
     {
-        h_input[i] = (int) (rand() & 0xff);
+        h_a[i] = (int)(rand() & 0xFF);
+        h_b[i] = (int)(rand() & 0xFF);
     }
-    
-    int * d_input;
-    cudaMalloc((void**)&d_input, byte_size);
 
-    cudaMemcpy(d_input, h_input, byte_size, cudaMemcpyHostToDevice);
+    // Compute sum on CPU
+    sum_arrays_cpu(h_a, h_b, h_c, size);
 
-    dim3 block(2,2,2);
-    dim3 grid(4,4,4);
+    // Zero out the results array for GPU
+    memset(gpu_results, 0, NO_BYTE);
 
-    mem_trs_test2<<<grid,block>>>(d_input, size);
+    // Allocate memory on the device
+    int* d_a, * d_b, * d_c;
+    cudaMalloc((void**)&d_a, NO_BYTE);
+    cudaMalloc((void**)&d_b, NO_BYTE);
+    cudaMalloc((void**)&d_c, NO_BYTE);
+
+    // Copy data from host to device
+    cudaMemcpy(d_a, h_a, NO_BYTE, cudaMemcpyHostToDevice);
+    cudaMemcpy(d_b, h_b, NO_BYTE, cudaMemcpyHostToDevice);
+
+    // Launch the kernel
+    dim3 block(block_size);
+    dim3 grid((size / block.x) + 1);
+    sum_arrays_gpu <<<grid, block>>> (d_a, d_b, d_c, size);
     cudaDeviceSynchronize();
 
-    cudaFree(d_input);
-    free(h_input);
+    // Copy results from device to host
+    cudaMemcpy(gpu_results, d_c, NO_BYTE, cudaMemcpyDeviceToHost);
 
-    cudaDeviceReset();
+    // Compare the results
+    compare_arrays(gpu_results, h_c, size);
+
+    // Free device memory
+    cudaFree(d_a);
+    cudaFree(d_b);
+    cudaFree(d_c);
+
+    // Free host memory
+    free(h_a);
+    free(h_b);
+    free(gpu_results);
+    free(h_c);
+
     return 0;
 }
